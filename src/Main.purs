@@ -10,18 +10,7 @@ import Prim.Row (class Cons, class Lacks)
 import Record (get)
 import Type.Data.Symbol (SProxy(..))
 import Type.Prelude (class IsSymbol)
-import Unsafe.Coerce (unsafeCoerce)
 
-foreign import data Exists2 ∷ (Type → Type → Type) → Type
-
-mkExists2 ∷ ∀ f a b. f a b → Exists2 f
-mkExists2 = unsafeCoerce
-
-runExists2 ∷ ∀ f r. (∀ a b. f a b → r) → Exists2 f → r
-runExists2 = unsafeCoerce
-
-data Lam ctx o' i o = Lam (Expr ctx i → Expr ctx o) ((i → o) ~ o')
-data App ctx o i = App (Expr ctx (i → o)) (Expr ctx i)
 data Arr ctx a e = Arr (Array (Expr ctx e)) (Array e ~ a)
 
 data EqExpr ctx i = EqExpr (Expr ctx i) (Expr ctx i) (i → i → Boolean)
@@ -42,8 +31,6 @@ data Expr ctx a
       (Expr ctx (Array (Node String)))
       (Node String ~ a)
   | Var (Record ctx → a)
-  | ELam (Exists2 (Lam ctx a))
-  | EApp (Exists (App ctx a))
 
 
 data Node n
@@ -69,14 +56,6 @@ node tag children = ENode (ELit tag) (EArray (mkExists (Arr children identity)))
 if_ ∷ ∀ a ctx. Expr ctx Boolean → Expr ctx a → Expr ctx a → Expr ctx a
 if_ c t f = EIfThenElse c t f
 
-lambda ∷ ∀ ctx i o. (Expr ctx i →  Expr ctx o) → Expr ctx (i → o)
-lambda f = ELam (mkExists2 (Lam f identity))
-
-app ∷ ∀ ctx i o. (Expr ctx (i → o)) → Expr ctx i → Expr ctx o
--- app (ELam l) x =
---   runExists2 (\(Lam f _) → f x) l
--- (runExists2 (\(Lam f proof) → (coerce proof \x → interpret ctx (f x))) l)
-app l arg = EApp (mkExists (App l arg))
 
 instance monoidExpr ∷ Monoid a ⇒ Monoid (Expr ctx a) where
   mempty = ELit mempty
@@ -119,9 +98,6 @@ interpret ctx (EIfThenElse c t f) =
   then (interpret ctx t)
   else (interpret ctx f)
 interpret ctx (Var get) = (get ctx)
-interpret ctx (EApp a) = runExists (\(App l arg) → (interpret ctx l) (interpret ctx arg)) a
-interpret ctx (ELam l) =
-  (runExists2 (\(Lam f proof) → (coerce proof \x → interpret ctx (f (ELit x)))) l)
 interpret ctx (ENode name children proof) =
   let
     n = interpret ctx name
@@ -129,9 +105,10 @@ interpret ctx (ENode name children proof) =
   in
     coerce proof (Node n c)
 
-
+template ∷ Expr ( x ∷ Int) Int
 template = EIfThenElse (var _x `eq'` ELit 8) (ELit 9) (ELit 10)
 
+boolean ∷ ∀ ctx. Expr ctx Int → Expr ctx (Node String)
 boolean = \x → node "div"
   [ if_ (x `eq'` ELit 8)
       (node "true" [])
