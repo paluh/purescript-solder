@@ -8,6 +8,7 @@ import Debug.Trace (traceM)
 import Effect (Effect)
 import Prim.Row (class Cons, class Lacks)
 import Record (get)
+import Text.Smolder.Markup (Attr(..), NS(..))
 import Type.Data.Symbol (SProxy(..))
 import Type.Prelude (class IsSymbol)
 
@@ -26,23 +27,21 @@ data Expr ctx a
   | EArray (Exists (Arr ctx a))
   | EIfThenElse (Expr ctx Boolean) (Expr ctx a) (Expr ctx a)
   | EEq (Exists (EqExpr ctx)) (Boolean ~ a)
-  | ENode
+  | EElem
+      NS
       (Expr ctx String)
-      (Expr ctx (Array (Node String)))
-      (Node String ~ a)
+      (Expr ctx (Array Markup))
+      (Expr ctx (Array Attr))
+      (Markup ~ a)
   | Var (Record ctx → a)
 
-
-data Node n
-  = Node n (Array (Node n))
-  | Render String
+data Markup
+  = Element NS String (Array Markup) (Array Attr)
+  | Content String
+  | Empty
 
 eq' ∷ ∀ ctx a. Eq a ⇒ Expr ctx a → Expr ctx a → Expr ctx Boolean
 eq' e1 e2 = EEq (mkExists (EqExpr e1 e2 eq)) identity
-
-_x = SProxy ∷ SProxy "x"
-_y = SProxy ∷ SProxy "y"
-_z = SProxy ∷ SProxy "z"
 
 var ∷ ∀ a ctx ctx' s
   . Lacks s ctx
@@ -50,8 +49,8 @@ var ∷ ∀ a ctx ctx' s
   ⇒ (IsSymbol s) ⇒ SProxy s → Expr ctx' a
 var s = Var (get s)
 
-node ∷ ∀ ctx. String → Array (Expr ctx (Node String)) → Expr ctx (Node String)
-node tag children = ENode (ELit tag) (EArray (mkExists (Arr children identity))) identity
+elem ∷ ∀ ctx. String → Array (Expr ctx Markup) → Expr ctx Markup
+elem el children = EElem HTMLns (ELit el) (EArray (mkExists (Arr children identity))) (ELit []) identity
 
 if_ ∷ ∀ a ctx. Expr ctx Boolean → Expr ctx a → Expr ctx a → Expr ctx a
 if_ c t f = EIfThenElse c t f
@@ -98,25 +97,30 @@ interpret ctx (EIfThenElse c t f) =
   then (interpret ctx t)
   else (interpret ctx f)
 interpret ctx (Var get) = (get ctx)
-interpret ctx (ENode name children proof) =
+interpret ctx (EElem ns el kids attrs proof) =
   let
-    n = interpret ctx name
-    c = interpret ctx children
+    el' = interpret ctx el
+    kids' = interpret ctx kids
+    attrs' = interpret ctx attrs
   in
-    coerce proof (Node n c)
+    coerce proof (Element ns el' kids' attrs')
+
+_x = SProxy ∷ SProxy "x"
+_y = SProxy ∷ SProxy "y"
+_z = SProxy ∷ SProxy "z"
 
 template ∷ Expr ( x ∷ Int) Int
 template = EIfThenElse (var _x `eq'` ELit 8) (ELit 9) (ELit 10)
 
-boolean ∷ ∀ ctx. Expr ctx Int → Expr ctx (Node String)
-boolean = \x → node "div"
+boolean ∷ ∀ ctx. Expr ctx Int → Expr ctx Markup
+boolean = \x → elem "div"
   [ if_ (x `eq'` ELit 8)
-      (node "true" [])
-      (node "false" [])
+      (elem "true" [])
+      (elem "false" [])
   ]
 
-html ∷ Expr (x ∷ Int, y ∷ Int) (Node String)
-html = node "div"
+html ∷ Expr (x ∷ Int, y ∷ Int) Markup
+html = elem "div"
   [ boolean (var _x)
   , boolean (var _y)
   ]
