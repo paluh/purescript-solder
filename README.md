@@ -1,3 +1,3 @@
 # purescript-s~~m~~odler
 
-A simple, experimental expression DLS to make HTML templating fast.
+A simple, experimental expression based DLS which should render HTML fast.
