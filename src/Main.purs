@@ -3,7 +3,7 @@ module Main where
 import Prelude
 
 import Data.Exists (Exists, mkExists, runExists)
-import Data.Foldable (fold, foldMap)
+import Data.Foldable (foldMap)
 import Data.Leibniz (type (~), coerce)
 import Debug.Trace (traceM)
 import Effect (Effect)
@@ -12,18 +12,12 @@ import Record (get)
 import Text.Smolder.Markup (Attr, NS(..))
 import Type.Data.Symbol (SProxy(..))
 import Type.Prelude (class IsSymbol)
-import Unsafe.Coerce (unsafeCoerce)
-
-
--- | We should accumulate probably `maps` here
--- data ArrExpr ctx a e = ArrExpr (Array (Expr ctx e)) (Array e ~ a)
 
 data BinOpExpr ctx a i = BinOpExpr (Expr ctx i) (Expr ctx i) (i → i → a)
 
 data Expr ctx a
   = ELit a
   | BinOp (Exists (BinOpExpr ctx a))
-  -- | EArray (Exists (ArrExpr ctx a))
   | EIfThenElse (Expr ctx Boolean) (Expr ctx a) (Expr ctx a)
   | EElem
       NS
@@ -82,9 +76,6 @@ interpret ∷ ∀ a ctx. Record ctx → Expr ctx a → a
 interpret ctx (ELit a) = a
 interpret ctx (BinOp b) =
   runExists (\(BinOpExpr e1 e2 f) → (f (interpret ctx e1) (interpret ctx e2))) b
--- interpret ctx (EEq exp proof) =
---   runExists (\(EqExpr e1 e2 eq) → coerce proof (eq (interpret ctx e1) (interpret ctx e2))) exp
--- interpret ctx (EArray a) = runExists (\(ArrExpr arr proof) → coerce proof (map (interpret ctx) arr)) a
 interpret ctx (EIfThenElse c t f) =
   if (interpret ctx c)
   then (interpret ctx t)
@@ -160,7 +151,6 @@ html = elem "div"
   [ boolean (var _x)
   , boolean (var _y)
   ]
-
 
 main ∷ Effect Unit
 main = do
