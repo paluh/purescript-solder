@@ -3,6 +3,7 @@ module Main where
 import Prelude
 
 import Data.Exists (Exists, mkExists, runExists)
+import Data.Foldable (fold, foldMap)
 import Data.Leibniz (type (~), coerce)
 import Debug.Trace (traceM)
 import Effect (Effect)
@@ -13,21 +14,15 @@ import Type.Data.Symbol (SProxy(..))
 import Type.Prelude (class IsSymbol)
 import Unsafe.Coerce (unsafeCoerce)
 
-data Arr ctx a e = Arr (Array (Expr ctx e)) (Array e ~ a)
+data ArrExpr ctx a e = ArrExpr (Array (Expr ctx e)) (Array e ~ a)
 
-data EqExpr ctx i = EqExpr (Expr ctx i) (Expr ctx i) (i → i → Boolean)
+data BinOpExpr ctx a i = BinOpExpr (Expr ctx i) (Expr ctx i) (i → i → a)
 
 data Expr ctx a
   = ELit a
-  | EAdd (Expr ctx a) (Expr ctx a) (a → a → a)
-  | ESub (Expr ctx a) (Expr ctx a) (a → a → a)
-  | EMul (Expr ctx a) (Expr ctx a) (a → a → a)
-  | EDiv (Expr ctx a) (Expr ctx a) (a → a → a)
-  | EMod (Expr ctx a) (Expr ctx a) (a → a → a)
-  | EAppend (Expr ctx a) (Expr ctx a) (a → a → a)
-  | EArray (Exists (Arr ctx a))
+  | BinOp (Exists (BinOpExpr ctx a))
+  | EArray (Exists (ArrExpr ctx a))
   | EIfThenElse (Expr ctx Boolean) (Expr ctx a) (Expr ctx a)
-  | EEq (Exists (EqExpr ctx)) (Boolean ~ a)
   | EElem
       NS
       (Expr ctx String)
@@ -42,7 +37,7 @@ data Markup
   -- | Empty
 
 eq' ∷ ∀ ctx a. Eq a ⇒ Expr ctx a → Expr ctx a → Expr ctx Boolean
-eq' e1 e2 = EEq (mkExists (EqExpr e1 e2 eq)) identity
+eq' e1 e2 = BinOp (mkExists $ BinOpExpr e1 e2 eq)
 
 var ∷ ∀ a ctx ctx' s
   . Lacks s ctx
@@ -51,48 +46,43 @@ var ∷ ∀ a ctx ctx' s
 var s = EVar (get s)
 
 elem ∷ ∀ ctx. String → Array (Expr ctx Markup) → Expr ctx Markup
-elem el children = EElem HTMLns (ELit el) (EArray (mkExists (Arr children identity))) (ELit []) identity
+elem el children = EElem HTMLns (ELit el) (EArray (mkExists (ArrExpr children identity))) (ELit []) identity
 
 if_ ∷ ∀ a ctx. Expr ctx Boolean → Expr ctx a → Expr ctx a → Expr ctx a
 if_ c t f = EIfThenElse c t f
-
 
 instance monoidExpr ∷ Monoid a ⇒ Monoid (Expr ctx a) where
   mempty = ELit mempty
 
 instance semigroupExpr ∷ Semigroup a ⇒ Semigroup (Expr ctx a) where
-  append e1 e2 = EAppend e1 e2 append
+  append e1 e2 = BinOp (mkExists $ BinOpExpr e1 e2 (<>))
 
 instance semiringExprNum ∷ Semiring a ⇒ Semiring (Expr ctx a) where
   zero = ELit zero
-  add e1 e2 = EAdd e1 e2 add
+  add e1 e2 = BinOp (mkExists $ BinOpExpr e1 e2 (+))
   one = ELit one
-  mul e1 e2 = EMul e1 e2 mul
+  mul e1 e2 = BinOp (mkExists $ BinOpExpr e1 e2 (*))
 
 instance ringExpr ∷ Ring a ⇒ Ring (Expr ctx a) where
-  sub e1 e2 = ESub e1 e2 sub
+  sub e1 e2 = BinOp (mkExists $ BinOpExpr e1 e2 (-))
 
 instance commutativeRingExprNum ∷ CommutativeRing a ⇒ CommutativeRing (Expr ctx a)
 
 instance euclideanRingExprNum ∷ EuclideanRing (Expr ctx Number) where
   degree _ = 1
-  div e1 e2 = EDiv e1 e2 div
-  mod e1 e2 = EMod e1 e2 mod
+  div e1 e2 = BinOp (mkExists $ BinOpExpr e1 e2 (/))
+  mod e1 e2 = BinOp (mkExists $ BinOpExpr e1 e2 mod)
 
 interpretBinary ∷ ∀ a ctx. (a → a → a) → Record ctx → Expr ctx a → Expr ctx a → a
 interpretBinary op ctx e1 e2 = op (interpret ctx e1) (interpret ctx e2)
 
 interpret ∷ ∀ a ctx. Record ctx → Expr ctx a → a
 interpret ctx (ELit a) = a
-interpret ctx (EAdd e1 e2 add) = interpretBinary add ctx e1 e2
-interpret ctx (ESub e1 e2 sub) = interpretBinary sub ctx e1 e2
-interpret ctx (EMul e1 e2 mul) = interpretBinary mul ctx e1 e2
-interpret ctx (EDiv e1 e2 div) = interpretBinary div ctx e1 e2
-interpret ctx (EMod e1 e2 mod) = interpretBinary mod ctx e1 e2
-interpret ctx (EEq exp proof) =
-  runExists (\(EqExpr e1 e2 eq) → coerce proof (eq (interpret ctx e1) (interpret ctx e2))) exp
-interpret ctx (EAppend s1 s2 append) = interpretBinary append ctx s1 s2
-interpret ctx (EArray a) = runExists (\(Arr arr proof) → coerce proof (map (interpret ctx) arr)) a
+interpret ctx (BinOp b) =
+  runExists (\(BinOpExpr e1 e2 f) → (f (interpret ctx e1) (interpret ctx e2))) b
+-- interpret ctx (EEq exp proof) =
+--   runExists (\(EqExpr e1 e2 eq) → coerce proof (eq (interpret ctx e1) (interpret ctx e2))) exp
+interpret ctx (EArray a) = runExists (\(ArrExpr arr proof) → coerce proof (map (interpret ctx) arr)) a
 interpret ctx (EIfThenElse c t f) =
   if (interpret ctx c)
   then (interpret ctx t)
@@ -147,6 +137,9 @@ _z = SProxy ∷ SProxy "z"
 template ∷ Expr ( x ∷ Int) Int
 template = EIfThenElse (var _x `eq'` ELit 8) (ELit 9) (ELit 10)
 
+add' ∷ Expr (x ∷ Int, y ∷ Int) Int
+add' = var _x  + var _y
+
 boolean ∷ ∀ ctx. Expr ctx Int → Expr ctx Markup
 boolean = \x → elem "div"
   [ if_ (x `eq'` ELit 8)
@@ -160,6 +153,8 @@ html = elem "div"
   , boolean (var _y)
   ]
 
+
 main ∷ Effect Unit
 main = do
   traceM html
+  traceM (interpret { x: 8, y: 10 } add')
