@@ -14,20 +14,22 @@ import Type.Data.Symbol (SProxy(..))
 import Type.Prelude (class IsSymbol)
 import Unsafe.Coerce (unsafeCoerce)
 
-data ArrExpr ctx a e = ArrExpr (Array (Expr ctx e)) (Array e ~ a)
+
+-- | We should accumulate probably `maps` here
+-- data ArrExpr ctx a e = ArrExpr (Array (Expr ctx e)) (Array e ~ a)
 
 data BinOpExpr ctx a i = BinOpExpr (Expr ctx i) (Expr ctx i) (i → i → a)
 
 data Expr ctx a
   = ELit a
   | BinOp (Exists (BinOpExpr ctx a))
-  | EArray (Exists (ArrExpr ctx a))
+  -- | EArray (Exists (ArrExpr ctx a))
   | EIfThenElse (Expr ctx Boolean) (Expr ctx a) (Expr ctx a)
   | EElem
       NS
-      (Expr ctx String)
-      (Expr ctx (Array Markup))
-      (Expr ctx (Array Attr))
+      String
+      (Array (Expr ctx Markup))
+      (Array (Expr ctx Attr))
       (Markup ~ a)
   | EVar (Record ctx → a)
 
@@ -46,7 +48,7 @@ var ∷ ∀ a ctx ctx' s
 var s = EVar (get s)
 
 elem ∷ ∀ ctx. String → Array (Expr ctx Markup) → Expr ctx Markup
-elem el children = EElem HTMLns (ELit el) (EArray (mkExists (ArrExpr children identity))) (ELit []) identity
+elem el kids = EElem HTMLns el kids [] identity
 
 if_ ∷ ∀ a ctx. Expr ctx Boolean → Expr ctx a → Expr ctx a → Expr ctx a
 if_ c t f = EIfThenElse c t f
@@ -82,7 +84,7 @@ interpret ctx (BinOp b) =
   runExists (\(BinOpExpr e1 e2 f) → (f (interpret ctx e1) (interpret ctx e2))) b
 -- interpret ctx (EEq exp proof) =
 --   runExists (\(EqExpr e1 e2 eq) → coerce proof (eq (interpret ctx e1) (interpret ctx e2))) exp
-interpret ctx (EArray a) = runExists (\(ArrExpr arr proof) → coerce proof (map (interpret ctx) arr)) a
+-- interpret ctx (EArray a) = runExists (\(ArrExpr arr proof) → coerce proof (map (interpret ctx) arr)) a
 interpret ctx (EIfThenElse c t f) =
   if (interpret ctx c)
   then (interpret ctx t)
@@ -90,11 +92,10 @@ interpret ctx (EIfThenElse c t f) =
 interpret ctx (EVar get) = (get ctx)
 interpret ctx (EElem ns el kids attrs proof) =
   let
-    el' = interpret ctx el
-    kids' = interpret ctx kids
-    attrs' = interpret ctx attrs
+    kids' = map (interpret ctx) kids
+    attrs' = map (interpret ctx) attrs
   in
-    coerce proof (Element ns el' kids' attrs')
+    coerce proof (Element ns el kids' attrs')
 
 data Eval ctx a
   = Val a
@@ -118,17 +119,24 @@ run ∷ ∀ a ctx. Semigroup a ⇒ Record ctx → Eval ctx a → a
 run _ (Val a) = a
 run ctx (Compute a1 f a2) = a1 <> f ctx <> a2
 
-eval ∷ ∀ a a' ctx. Semigroup a' ⇒ Monoid a' ⇒ (a → a') → Expr ctx a → Eval ctx a'
-eval ev (EIfThenElse c t f) =
+ser :: Markup -> String
+ser (Element ns el kids attrs) =
+  "<" <> el <> ">" <> foldMap ser kids <> "</" <> el <> ">"
+
+eval ∷ ∀ ctx. Expr ctx Markup → Eval ctx String
+eval (EElem ns el kids attrs _) =
+  (Val $ "<" <> el <> ">") <> (foldMap eval kids) <> (Val $ "</" <> el <> ">")
+eval (EIfThenElse c t f) =
   let
-    t' = eval ev t
-    f' = eval ev f
+    t' = eval t
+    f' = eval f
     g ctx = if (interpret ctx c)
       then run ctx t'
       else run ctx f'
   in
     Compute mempty g mempty
-eval _ _  = unsafeCoerce 8
+eval (ELit m) = Val (ser m)
+eval expr = Compute mempty (\ctx → ser (interpret ctx expr)) mempty
 
 _x = SProxy ∷ SProxy "x"
 _y = SProxy ∷ SProxy "y"
@@ -157,4 +165,5 @@ html = elem "div"
 main ∷ Effect Unit
 main = do
   traceM html
+  traceM (eval html)
   traceM (interpret { x: 8, y: 10 } add')
