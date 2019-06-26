@@ -8,9 +8,10 @@ import Debug.Trace (traceM)
 import Effect (Effect)
 import Prim.Row (class Cons, class Lacks)
 import Record (get)
-import Text.Smolder.Markup (Attr(..), NS(..))
+import Text.Smolder.Markup (Attr, NS(..))
 import Type.Data.Symbol (SProxy(..))
 import Type.Prelude (class IsSymbol)
+import Unsafe.Coerce (unsafeCoerce)
 
 data Arr ctx a e = Arr (Array (Expr ctx e)) (Array e ~ a)
 
@@ -33,12 +34,12 @@ data Expr ctx a
       (Expr ctx (Array Markup))
       (Expr ctx (Array Attr))
       (Markup ~ a)
-  | Var (Record ctx → a)
+  | EVar (Record ctx → a)
 
 data Markup
   = Element NS String (Array Markup) (Array Attr)
-  | Content String
-  | Empty
+  -- | Content String
+  -- | Empty
 
 eq' ∷ ∀ ctx a. Eq a ⇒ Expr ctx a → Expr ctx a → Expr ctx Boolean
 eq' e1 e2 = EEq (mkExists (EqExpr e1 e2 eq)) identity
@@ -47,7 +48,7 @@ var ∷ ∀ a ctx ctx' s
   . Lacks s ctx
   ⇒ Cons s a ctx ctx'
   ⇒ (IsSymbol s) ⇒ SProxy s → Expr ctx' a
-var s = Var (get s)
+var s = EVar (get s)
 
 elem ∷ ∀ ctx. String → Array (Expr ctx Markup) → Expr ctx Markup
 elem el children = EElem HTMLns (ELit el) (EArray (mkExists (Arr children identity))) (ELit []) identity
@@ -96,7 +97,7 @@ interpret ctx (EIfThenElse c t f) =
   if (interpret ctx c)
   then (interpret ctx t)
   else (interpret ctx f)
-interpret ctx (Var get) = (get ctx)
+interpret ctx (EVar get) = (get ctx)
 interpret ctx (EElem ns el kids attrs proof) =
   let
     el' = interpret ctx el
@@ -104,6 +105,29 @@ interpret ctx (EElem ns el kids attrs proof) =
     attrs' = interpret ctx attrs
   in
     coerce proof (Element ns el' kids' attrs')
+
+data Eval ctx a = Val a | Compute (Record ctx → a)
+
+instance semigroupEval ∷ Semigroup a ⇒ Semigroup (Eval ctx a) where
+  append (Val a1) (Val a2) = Val $ a1 <> a2
+  append (Val a) (Compute f) = Compute $ (a <> _) <$> f
+  append (Compute f) (Val a) = Compute $ (_ <> a) <$> f
+  append (Compute f1) (Compute f2) = Compute (f1 <> f2)
+
+run ∷ ∀ a ctx. Record ctx → Eval ctx a → a
+run _ (Val a) = a
+run ctx (Compute f) = f ctx
+
+eval ∷ ∀ a a' ctx. (a → a') → Expr ctx a → Eval ctx a'
+eval ev (EIfThenElse c t f) =
+  let
+    t' = eval ev t
+    f' = eval ev f
+  in Compute \ctx →
+    if (interpret ctx c)
+      then run ctx t'
+      else run ctx f'
+eval _ _  = unsafeCoerce 8
 
 _x = SProxy ∷ SProxy "x"
 _y = SProxy ∷ SProxy "y"
