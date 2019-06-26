@@ -106,27 +106,38 @@ interpret ctx (EElem ns el kids attrs proof) =
   in
     coerce proof (Element ns el' kids' attrs')
 
-data Eval ctx a = Val a | Compute (Record ctx → a)
+data Eval ctx a
+  = Val a
+  | Compute' a (Record ctx → a) a
 
 instance semigroupEval ∷ Semigroup a ⇒ Semigroup (Eval ctx a) where
   append (Val a1) (Val a2) = Val $ a1 <> a2
-  append (Val a) (Compute f) = Compute $ (a <> _) <$> f
-  append (Compute f) (Val a) = Compute $ (_ <> a) <$> f
-  append (Compute f1) (Compute f2) = Compute (f1 <> f2)
+  append (Compute' a1 f a2) (Val a3) = Compute' a1 f (a2 <> a3)
+  append (Val a1) (Compute' a2 f a3) = Compute' (a1 <> a2) f a3
+  append (Compute' a1 f1 a2) (Compute' a3 f2 a4) =
+    let
+      a' = a2 <> a3
+      f ctx = f1 ctx <> a' <> f2 ctx
+    in
+      Compute' a1 f a4
 
-run ∷ ∀ a ctx. Record ctx → Eval ctx a → a
+instance monoidEval ∷ Monoid a ⇒ Monoid (Eval ctx a) where
+  mempty = Val mempty
+
+run ∷ ∀ a ctx. Semigroup a ⇒ Record ctx → Eval ctx a → a
 run _ (Val a) = a
-run ctx (Compute f) = f ctx
+run ctx (Compute' a1 f a2) = a1 <> f ctx <> a2
 
-eval ∷ ∀ a a' ctx. (a → a') → Expr ctx a → Eval ctx a'
+eval ∷ ∀ a a' ctx. Semigroup a' ⇒ Monoid a' ⇒ (a → a') → Expr ctx a → Eval ctx a'
 eval ev (EIfThenElse c t f) =
   let
     t' = eval ev t
     f' = eval ev f
-  in Compute \ctx →
-    if (interpret ctx c)
+    g ctx = if (interpret ctx c)
       then run ctx t'
       else run ctx f'
+  in
+    Compute' mempty g mempty
 eval _ _  = unsafeCoerce 8
 
 _x = SProxy ∷ SProxy "x"
