@@ -1,3 +1,3 @@
 # purescript-s~~m~~older
 
-An unusable and simple expression based DLS which should render HTML fast.
+An __unusable__ and simple expression based DLS which should render HTML fast.
